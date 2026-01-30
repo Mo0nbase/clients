@@ -131,18 +131,20 @@ describe("OverlayBackground", () => {
   async function initOverlayElementPorts(options = { initList: true, initButton: true }) {
     const { initList, initButton } = options;
     if (initButton) {
-      triggerPortOnConnectEvent(createPortSpyMock(AutofillOverlayPort.Button));
+      const buttonPort = createPortSpyMock(AutofillOverlayPort.Button);
+      triggerPortOnConnectEvent(buttonPort);
       await flushPromises();
-      buttonPortSpy = overlayBackground["inlineMenuButtonPort"];
+      buttonPortSpy = overlayBackground["inlineMenuButtonPorts"][buttonPort.sender.tab.id];
 
       buttonMessageConnectorSpy = createPortSpyMock(AutofillOverlayPort.ButtonMessageConnector);
       triggerPortOnConnectEvent(buttonMessageConnectorSpy);
     }
 
     if (initList) {
-      triggerPortOnConnectEvent(createPortSpyMock(AutofillOverlayPort.List));
+      const listPort = createPortSpyMock(AutofillOverlayPort.List);
+      triggerPortOnConnectEvent(listPort);
       await flushPromises();
-      listPortSpy = overlayBackground["inlineMenuListPort"];
+      listPortSpy = overlayBackground["inlineMenuListPorts"][listPort.sender.tab.id];
 
       listMessageConnectorSpy = createPortSpyMock(AutofillOverlayPort.ListMessageConnector);
       triggerPortOnConnectEvent(listMessageConnectorSpy);
@@ -644,7 +646,9 @@ describe("OverlayBackground", () => {
 
           it("skips updating the inline menu list if the user has the inline menu set to open on button click", async () => {
             inlineMenuVisibilityMock$.next(AutofillOverlayVisibility.OnButtonClick);
-            overlayBackground["inlineMenuListPort"] = null;
+            if (sender.tab.id) {
+              overlayBackground["inlineMenuListPorts"][sender.tab.id] = null;
+            }
             tabsSendMessageSpy.mockImplementation((_tab, message, _options) => {
               if (message.command === "checkFocusedFieldHasValue") {
                 return Promise.resolve(true);
@@ -2297,7 +2301,7 @@ describe("OverlayBackground", () => {
         });
 
         it("closes the list if the user has the inline menu set to show on button click and the list is open", async () => {
-          overlayBackground["inlineMenuListPort"] = listPortSpy;
+          overlayBackground["inlineMenuListPorts"][sender.tab.id] = listPortSpy;
           inlineMenuVisibilityMock$.next(AutofillOverlayVisibility.OnButtonClick);
 
           sendMockExtensionMessage({ command: "openAutofillInlineMenu" }, sender);
@@ -2583,9 +2587,12 @@ describe("OverlayBackground", () => {
       });
 
       it("will check if the overlay button is focused if the list port is not open", () => {
-        overlayBackground["inlineMenuListPort"] = undefined;
+        const sender = mock<chrome.runtime.MessageSender>({ tab: { id: 1 } });
+        if (sender.tab.id) {
+          overlayBackground["inlineMenuListPorts"][sender.tab.id] = undefined;
+        }
 
-        sendMockExtensionMessage({ command: "checkAutofillInlineMenuFocused" });
+        sendMockExtensionMessage({ command: "checkAutofillInlineMenuFocused" }, sender);
 
         expect(buttonPortSpy.postMessage).toHaveBeenCalledWith({
           command: "checkAutofillInlineMenuButtonFocused",
@@ -3755,7 +3762,7 @@ describe("OverlayBackground", () => {
 
     it("generates a random 12 character string used to validate port messages from the tab", async () => {
       const port = createPortSpyMock(AutofillOverlayPort.Button);
-      overlayBackground["inlineMenuButtonPort"] = port;
+      overlayBackground["inlineMenuButtonPorts"][port.sender.tab.id] = port;
 
       triggerPortOnConnectEvent(port);
       await flushPromises();
@@ -3764,7 +3771,8 @@ describe("OverlayBackground", () => {
     });
 
     it("stores an existing overlay port so that it can be disconnected at a later time", async () => {
-      overlayBackground["inlineMenuButtonPort"] = mock<chrome.runtime.Port>();
+      const port = createPortSpyMock(AutofillOverlayPort.Button);
+      overlayBackground["inlineMenuButtonPorts"][port.sender.tab.id] = mock<chrome.runtime.Port>();
 
       await initOverlayElementPorts({ initList: false, initButton: true });
       await flushPromises();
@@ -3831,8 +3839,8 @@ describe("OverlayBackground", () => {
       triggerPortOnDisconnectEvent(listPortSpy);
       await flushPromises();
 
-      expect(overlayBackground["inlineMenuListPort"]).toBeNull();
-      expect(overlayBackground["inlineMenuButtonPort"]).toBeNull();
+      expect(overlayBackground["inlineMenuListPorts"][buttonPortSpy.sender.tab.id]).toBeNull();
+      expect(overlayBackground["inlineMenuButtonPorts"][buttonPortSpy.sender.tab.id]).toBeNull();
     });
   });
 });

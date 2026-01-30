@@ -126,10 +126,10 @@ export class OverlayBackground implements OverlayBackgroundInterface {
   private subFrameOffsetsForTab: SubFrameOffsetsForTab = {};
   private portKeyForTab: Record<number, string> = {};
   private expiredPorts: chrome.runtime.Port[] = [];
-  private inlineMenuButtonPort: chrome.runtime.Port;
-  private inlineMenuButtonMessageConnectorPort: chrome.runtime.Port;
-  private inlineMenuListPort: chrome.runtime.Port;
-  private inlineMenuListMessageConnectorPort: chrome.runtime.Port;
+  private inlineMenuButtonPorts: Record<number, chrome.runtime.Port> = {};
+  private inlineMenuButtonMessageConnectorPorts: Record<number, chrome.runtime.Port> = {};
+  private inlineMenuListPorts: Record<number, chrome.runtime.Port> = {};
+  private inlineMenuListMessageConnectorPorts: Record<number, chrome.runtime.Port> = {};
   private inlineMenuCiphers: Map<string, CipherView> = new Map();
   private inlineMenuFido2Credentials: Set<string> = new Set();
   private inlineMenuPageTranslations: Record<string, string>;
@@ -172,7 +172,7 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     getInlineMenuIdentitiesVisibility: () => this.getInlineMenuIdentitiesVisibility(),
     closeAutofillInlineMenu: ({ message, sender }) => this.closeInlineMenu(sender, message),
     checkAutofillInlineMenuFocused: ({ sender }) => this.checkInlineMenuFocused(sender),
-    focusAutofillInlineMenuList: () => this.focusInlineMenuList(),
+    focusAutofillInlineMenuList: ({ sender }) => this.focusInlineMenuList(sender),
     getAutofillInlineMenuPosition: () => this.getInlineMenuPosition(),
     updateAutofillInlineMenuElementIsVisibleStatus: ({ message, sender }) =>
       this.updateInlineMenuElementIsVisibleStatus(message, sender),
@@ -197,10 +197,11 @@ export class OverlayBackground implements OverlayBackgroundInterface {
   private readonly inlineMenuButtonPortMessageHandlers: InlineMenuButtonPortMessageHandlers = {
     triggerDelayedAutofillInlineMenuClosure: () => this.startInlineMenuDelayedClose$.next(),
     autofillInlineMenuButtonClicked: ({ port }) => this.handleInlineMenuButtonClicked(port),
-    autofillInlineMenuBlurred: () => this.checkInlineMenuListFocused(),
+    autofillInlineMenuBlurred: ({ port }) => this.checkInlineMenuListFocused(port.sender),
     redirectAutofillInlineMenuFocusOut: ({ message, port }) =>
       this.redirectInlineMenuFocusOut(message, port),
-    updateAutofillInlineMenuColorScheme: () => this.updateInlineMenuButtonColorScheme(),
+    updateAutofillInlineMenuColorScheme: ({ port }) =>
+      this.updateInlineMenuButtonColorScheme(port.sender),
   };
   private readonly inlineMenuListPortMessageHandlers: InlineMenuListPortMessageHandlers = {
     checkAutofillInlineMenuButtonFocused: ({ port }) =>
@@ -212,8 +213,9 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     viewSelectedCipher: ({ message, port }) => this.viewSelectedCipher(message, port),
     redirectAutofillInlineMenuFocusOut: ({ message, port }) =>
       this.redirectInlineMenuFocusOut(message, port),
-    updateAutofillInlineMenuListHeight: ({ message }) => this.updateInlineMenuListHeight(message),
-    refreshGeneratedPassword: () => this.updateGeneratedPassword(true),
+    updateAutofillInlineMenuListHeight: ({ message, port }) =>
+      this.updateInlineMenuListHeight(message, port.sender),
+    refreshGeneratedPassword: ({ port }) => this.updateGeneratedPassword(true, port.sender),
     fillGeneratedPassword: ({ port }) => this.fillGeneratedPassword(port),
     refreshOverlayCiphers: () => this.updateOverlayCiphers(false),
   };
@@ -324,6 +326,21 @@ export class OverlayBackground implements OverlayBackgroundInterface {
       delete this.portKeyForTab[tabId];
     }
 
+    // Clean up ports for this tab
+    const disconnectPort = (port: chrome.runtime.Port | undefined) => {
+      if (port) {
+        port.disconnect();
+      }
+    };
+    disconnectPort(this.inlineMenuButtonPorts[tabId]);
+    delete this.inlineMenuButtonPorts[tabId];
+    disconnectPort(this.inlineMenuButtonMessageConnectorPorts[tabId]);
+    delete this.inlineMenuButtonMessageConnectorPorts[tabId];
+    disconnectPort(this.inlineMenuListPorts[tabId]);
+    delete this.inlineMenuListPorts[tabId];
+    disconnectPort(this.inlineMenuListMessageConnectorPorts[tabId]);
+    delete this.inlineMenuListMessageConnectorPorts[tabId];
+
     this.generatedPassword = null;
     this.focusedFieldData = null;
   }
@@ -395,7 +412,7 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    * @param tab - The current tab
    */
   private async updateInlineMenuListCiphers(tab: chrome.tabs.Tab) {
-    this.postMessageToPort(this.inlineMenuListPort, {
+    this.postMessageToPort(this.inlineMenuListPorts[tab.id], {
       command: "updateAutofillInlineMenuListCiphers",
       ciphers: await this.getInlineMenuCipherData(),
       showInlineMenuAccountCreation: this.shouldShowInlineMenuAccountCreation(),
@@ -1083,7 +1100,7 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     );
 
     if (
-      !this.inlineMenuListPort &&
+      !this.inlineMenuListPorts[sender.tab.id] &&
       (await this.getInlineMenuVisibility()) === AutofillOverlayVisibility.OnButtonClick
     ) {
       return;
@@ -1274,8 +1291,9 @@ export class OverlayBackground implements OverlayBackgroundInterface {
       return;
     }
 
-    if (this.inlineMenuListPort) {
-      this.checkInlineMenuListFocused();
+    const listPort = this.inlineMenuListPorts[sender.tab.id];
+    if (listPort) {
+      this.checkInlineMenuListFocused(sender);
 
       return;
     }
@@ -1289,12 +1307,13 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    * @param sender - The sender of the port message
    */
   private checkInlineMenuButtonFocused(sender: chrome.runtime.MessageSender) {
-    if (!this.inlineMenuButtonPort) {
+    const buttonPort = this.inlineMenuButtonPorts[sender.tab.id];
+    if (!buttonPort) {
       this.closeInlineMenu(sender, { forceCloseInlineMenu: true });
       return;
     }
 
-    this.postMessageToPort(this.inlineMenuButtonPort, {
+    this.postMessageToPort(buttonPort, {
       command: "checkAutofillInlineMenuButtonFocused",
     });
   }
@@ -1302,8 +1321,8 @@ export class OverlayBackground implements OverlayBackgroundInterface {
   /**
    * Posts a message to the inline menu list iframe to check if it is focused.
    */
-  private checkInlineMenuListFocused() {
-    this.postMessageToPort(this.inlineMenuListPort, {
+  private checkInlineMenuListFocused(sender: chrome.runtime.MessageSender) {
+    this.postMessageToPort(this.inlineMenuListPorts[sender.tab.id], {
       command: "checkAutofillInlineMenuListFocused",
     });
   }
@@ -1367,8 +1386,11 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     }
 
     const message = { command: "triggerDelayedAutofillInlineMenuClosure" };
-    this.postMessageToPort(this.inlineMenuButtonPort, message);
-    this.postMessageToPort(this.inlineMenuListPort, message);
+    if (!this.focusedFieldData) {
+      return;
+    }
+    this.postMessageToPort(this.inlineMenuButtonPorts[this.focusedFieldData.tabId], message);
+    this.postMessageToPort(this.inlineMenuListPorts[this.focusedFieldData.tabId], message);
   }
 
   /**
@@ -1389,20 +1411,22 @@ export class OverlayBackground implements OverlayBackgroundInterface {
       return;
     }
 
+    const tabId = sender.tab.id;
+
     if (overlayElement === AutofillOverlayElement.Button) {
-      this.inlineMenuButtonPort?.disconnect();
-      this.inlineMenuButtonPort = null;
-      this.inlineMenuButtonMessageConnectorPort?.disconnect();
-      this.inlineMenuButtonMessageConnectorPort = null;
+      this.inlineMenuButtonPorts[tabId]?.disconnect();
+      delete this.inlineMenuButtonPorts[tabId];
+      this.inlineMenuButtonMessageConnectorPorts[tabId]?.disconnect();
+      delete this.inlineMenuButtonMessageConnectorPorts[tabId];
       this.isInlineMenuButtonVisible = false;
 
       return;
     }
 
-    this.inlineMenuListPort?.disconnect();
-    this.inlineMenuListPort = null;
-    this.inlineMenuListMessageConnectorPort?.disconnect();
-    this.inlineMenuListMessageConnectorPort = null;
+    this.inlineMenuListPorts[tabId]?.disconnect();
+    delete this.inlineMenuListPorts[tabId];
+    this.inlineMenuListMessageConnectorPorts[tabId]?.disconnect();
+    delete this.inlineMenuListMessageConnectorPorts[tabId];
     this.isInlineMenuListVisible = false;
   }
 
@@ -1506,7 +1530,7 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     }
 
     if (overlayElement === AutofillOverlayElement.Button) {
-      this.postMessageToPort(this.inlineMenuButtonPort, {
+      this.postMessageToPort(this.inlineMenuButtonPorts[sender.tab.id], {
         command: "updateAutofillInlineMenuPosition",
         styles: this.getInlineMenuButtonPosition(subFrameOffsets),
       });
@@ -1515,7 +1539,7 @@ export class OverlayBackground implements OverlayBackgroundInterface {
       return;
     }
 
-    this.postMessageToPort(this.inlineMenuListPort, {
+    this.postMessageToPort(this.inlineMenuListPorts[sender.tab.id], {
       command: "updateAutofillInlineMenuPosition",
       styles: this.getInlineMenuListPosition(subFrameOffsets),
     });
@@ -1564,8 +1588,11 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     }
 
     const message = { command: "fadeInAutofillInlineMenuIframe" };
-    this.postMessageToPort(this.inlineMenuButtonPort, message);
-    this.postMessageToPort(this.inlineMenuListPort, message);
+    if (!this.focusedFieldData) {
+      return;
+    }
+    this.postMessageToPort(this.inlineMenuButtonPorts[this.focusedFieldData.tabId], message);
+    this.postMessageToPort(this.inlineMenuListPorts[this.focusedFieldData.tabId], message);
   }
 
   /**
@@ -1730,11 +1757,11 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    */
   private async updateInlineMenuGeneratedPasswordOnFocus(tab: chrome.tabs.Tab) {
     if (await this.shouldShowSaveLoginInlineMenuList(tab)) {
-      this.showSaveLoginInlineMenuList();
+      this.showSaveLoginInlineMenuList({ tab } as chrome.runtime.MessageSender);
       return;
     }
 
-    await this.updateGeneratedPassword();
+    await this.updateGeneratedPassword(false, { tab } as chrome.runtime.MessageSender);
   }
 
   /**
@@ -1748,7 +1775,7 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     sender: chrome.runtime.MessageSender,
   ) {
     if (await this.shouldShowSaveLoginInlineMenuList(sender.tab)) {
-      this.showSaveLoginInlineMenuList();
+      this.showSaveLoginInlineMenuList(sender);
       return;
     }
 
@@ -1764,7 +1791,7 @@ export class OverlayBackground implements OverlayBackgroundInterface {
       this.focusedFieldMatchesFillType(CipherType.Login) &&
       this.focusedFieldMatchesAccountCreationType(InlineMenuAccountCreationFieldType.Password)
     ) {
-      await this.updateGeneratedPassword();
+      await this.updateGeneratedPassword(false, sender);
       return;
     }
 
@@ -1790,8 +1817,10 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    * Sends a message to the list to show the save login inline menu list view. This view
    * is shown after a field is filled with a generated password.
    */
-  private showSaveLoginInlineMenuList() {
-    this.postMessageToPort(this.inlineMenuListPort, { command: "showSaveLoginInlineMenuList" });
+  private showSaveLoginInlineMenuList(sender: chrome.runtime.MessageSender) {
+    this.postMessageToPort(this.inlineMenuListPorts[sender.tab.id], {
+      command: "showSaveLoginInlineMenuList",
+    });
   }
 
   /**
@@ -1807,12 +1836,15 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    *
    * @param refreshPassword - Identifies whether the generated password should be refreshed
    */
-  private async updateGeneratedPassword(refreshPassword: boolean = false) {
+  private async updateGeneratedPassword(
+    refreshPassword: boolean = false,
+    sender: chrome.runtime.MessageSender,
+  ) {
     if (!this.generatedPassword || refreshPassword) {
       await this.generatePassword();
     }
 
-    this.postMessageToPort(this.inlineMenuListPort, {
+    this.postMessageToPort(this.inlineMenuListPorts[sender.tab.id], {
       command: "updateAutofillInlineMenuGeneratedPassword",
       generatedPassword: this.generatedPassword,
       refreshPassword,
@@ -1947,21 +1979,24 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     }
 
     const portMessage = { command: "toggleAutofillInlineMenuHidden", styles };
-    if (this.inlineMenuButtonPort) {
+    const buttonPort = this.inlineMenuButtonPorts[sender.tab.id];
+    const listPort = this.inlineMenuListPorts[sender.tab.id];
+
+    if (buttonPort) {
       this.updateInlineMenuElementIsVisibleStatus(
         { overlayElement: AutofillOverlayElement.Button, isVisible: !isInlineMenuHidden },
         sender,
       );
-      this.postMessageToPort(this.inlineMenuButtonPort, portMessage);
+      this.postMessageToPort(buttonPort, portMessage);
     }
 
-    if (this.inlineMenuListPort) {
+    if (listPort) {
       this.isInlineMenuListVisible = !isInlineMenuHidden;
       this.updateInlineMenuElementIsVisibleStatus(
         { overlayElement: AutofillOverlayElement.List, isVisible: !isInlineMenuHidden },
         sender,
       );
-      this.postMessageToPort(this.inlineMenuListPort, portMessage);
+      this.postMessageToPort(listPort, portMessage);
     }
 
     if (setTransparentInlineMenu) {
@@ -2008,7 +2043,7 @@ export class OverlayBackground implements OverlayBackgroundInterface {
       return;
     }
 
-    if (this.inlineMenuListPort) {
+    if (this.inlineMenuListPorts[sender.tab.id]) {
       this.closeInlineMenu(sender, {
         forceCloseInlineMenu: true,
         overlayElement: AutofillOverlayElement.List,
@@ -2069,8 +2104,11 @@ export class OverlayBackground implements OverlayBackgroundInterface {
   /**
    * Sends a message to the inline menu button to update its authentication status.
    */
-  private async updateInlineMenuButtonAuthStatus() {
-    this.postMessageToPort(this.inlineMenuButtonPort, {
+  private async updateInlineMenuButtonAuthStatus(tabId?: number) {
+    if (!tabId) {
+      return;
+    }
+    this.postMessageToPort(this.inlineMenuButtonPorts[tabId], {
       command: "updateInlineMenuButtonAuthStatus",
       authStatus: await this.getAuthStatus(),
     });
@@ -2142,8 +2180,10 @@ export class OverlayBackground implements OverlayBackgroundInterface {
   /**
    * Facilitates redirecting focus to the inline menu list.
    */
-  private focusInlineMenuList() {
-    this.postMessageToPort(this.inlineMenuListPort, { command: "focusAutofillInlineMenuList" });
+  private focusInlineMenuList(sender: chrome.runtime.MessageSender) {
+    this.postMessageToPort(this.inlineMenuListPorts[sender.tab.id], {
+      command: "focusAutofillInlineMenuList",
+    });
   }
 
   /**
@@ -2153,7 +2193,10 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    * @param message - Extension message received from the `unlockCompleted` command
    */
   private async unlockCompleted(message: OverlayBackgroundExtensionMessage) {
-    await this.updateInlineMenuButtonAuthStatus();
+    const tabId = message.data?.commandToRetry?.sender?.tab?.id;
+    if (tabId != null) {
+      await this.updateInlineMenuButtonAuthStatus(tabId);
+    }
 
     const openInlineMenu =
       message.data?.commandToRetry?.message?.command === "openAutofillInlineMenu";
@@ -2683,8 +2726,8 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    * is accomplished by setting the "color-scheme" meta value of the button iframe to
    * the same value as the page's meta "color-scheme" value.
    */
-  private updateInlineMenuButtonColorScheme() {
-    this.postMessageToPort(this.inlineMenuButtonPort, {
+  private updateInlineMenuButtonColorScheme(sender: chrome.runtime.MessageSender) {
+    this.postMessageToPort(this.inlineMenuButtonPorts[sender.tab.id], {
       command: "updateAutofillInlineMenuColorScheme",
     });
   }
@@ -2694,13 +2737,16 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    *
    * @param message - Contains the dimensions of the inline menu list
    */
-  private updateInlineMenuListHeight(message: OverlayBackgroundExtensionMessage) {
+  private updateInlineMenuListHeight(
+    message: OverlayBackgroundExtensionMessage,
+    sender: chrome.runtime.MessageSender,
+  ) {
     const parsedHeight = parseInt(message.styles?.height);
     if (this.inlineMenuPosition.list && parsedHeight > 0) {
       this.inlineMenuPosition.list.height = parsedHeight;
     }
 
-    this.postMessageToPort(this.inlineMenuListPort, {
+    this.postMessageToPort(this.inlineMenuListPorts[sender.tab.id], {
       command: "updateAutofillInlineMenuPosition",
       styles: message.styles,
     });
@@ -3009,27 +3055,33 @@ export class OverlayBackground implements OverlayBackgroundInterface {
    * @param port - The port to store
    */
   private storeOverlayPort(port: chrome.runtime.Port) {
+    const tabId = port.sender.tab.id;
+
     if (port.name === AutofillOverlayPort.List) {
-      this.storeExpiredOverlayPort(this.inlineMenuListPort);
-      this.inlineMenuListPort = port;
+      const previousPort = this.inlineMenuListPorts[tabId];
+      this.storeExpiredOverlayPort(previousPort);
+      this.inlineMenuListPorts[tabId] = port;
       return;
     }
 
     if (port.name === AutofillOverlayPort.Button) {
-      this.storeExpiredOverlayPort(this.inlineMenuButtonPort);
-      this.inlineMenuButtonPort = port;
+      const previousPort = this.inlineMenuButtonPorts[tabId];
+      this.storeExpiredOverlayPort(previousPort);
+      this.inlineMenuButtonPorts[tabId] = port;
       return;
     }
 
     if (port.name === AutofillOverlayPort.ButtonMessageConnector) {
-      this.storeExpiredOverlayPort(this.inlineMenuButtonMessageConnectorPort);
-      this.inlineMenuButtonMessageConnectorPort = port;
+      const previousPort = this.inlineMenuButtonMessageConnectorPorts[tabId];
+      this.storeExpiredOverlayPort(previousPort);
+      this.inlineMenuButtonMessageConnectorPorts[tabId] = port;
       return;
     }
 
     if (port.name === AutofillOverlayPort.ListMessageConnector) {
-      this.storeExpiredOverlayPort(this.inlineMenuListMessageConnectorPort);
-      this.inlineMenuListMessageConnectorPort = port;
+      const previousPort = this.inlineMenuListMessageConnectorPorts[tabId];
+      this.storeExpiredOverlayPort(previousPort);
+      this.inlineMenuListMessageConnectorPorts[tabId] = port;
       return;
     }
   }
@@ -3113,18 +3165,19 @@ export class OverlayBackground implements OverlayBackgroundInterface {
   };
 
   /**
-   * Ensures that the inline menu list and button port
-   * references are reset when they are disconnected.
+   * Handles the disconnect event of a port. Ensures that the port data is
+   * properly cleaned up when a port is disconnected.
    *
    * @param port - The port that was disconnected
    */
   private handlePortOnDisconnect = (port: chrome.runtime.Port) => {
     const updateVisibilityDefaults = { isVisible: false, forceUpdate: true };
+    const tabId = port.sender.tab.id;
 
     if (port.name === AutofillOverlayPort.List) {
-      this.inlineMenuListPort = null;
-      this.inlineMenuListMessageConnectorPort?.disconnect();
-      this.inlineMenuListMessageConnectorPort = null;
+      delete this.inlineMenuListPorts[tabId];
+      this.inlineMenuListMessageConnectorPorts[tabId]?.disconnect();
+      delete this.inlineMenuListMessageConnectorPorts[tabId];
       this.updateInlineMenuElementIsVisibleStatus(
         Object.assign(updateVisibilityDefaults, { overlayElement: AutofillOverlayElement.List }),
         port.sender,
@@ -3133,9 +3186,9 @@ export class OverlayBackground implements OverlayBackgroundInterface {
     }
 
     if (port.name === AutofillOverlayPort.Button) {
-      this.inlineMenuButtonPort = null;
-      this.inlineMenuButtonMessageConnectorPort?.disconnect();
-      this.inlineMenuButtonMessageConnectorPort = null;
+      delete this.inlineMenuButtonPorts[tabId];
+      this.inlineMenuButtonMessageConnectorPorts[tabId]?.disconnect();
+      delete this.inlineMenuButtonMessageConnectorPorts[tabId];
       this.updateInlineMenuElementIsVisibleStatus(
         Object.assign(updateVisibilityDefaults, { overlayElement: AutofillOverlayElement.List }),
         port.sender,

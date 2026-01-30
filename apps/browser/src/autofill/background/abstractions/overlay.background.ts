@@ -244,7 +244,7 @@ export type OverlayBackgroundExtensionMessageHandlers = {
   getInlineMenuIdentitiesVisibility: () => void;
   closeAutofillInlineMenu: ({ message, sender }: BackgroundOnMessageHandlerParams) => void;
   checkAutofillInlineMenuFocused: ({ sender }: BackgroundSenderParam) => void;
-  focusAutofillInlineMenuList: () => void;
+  focusAutofillInlineMenuList: ({ sender }: BackgroundSenderParam) => void;
   getAutofillInlineMenuPosition: () => InlineMenuPosition;
   updateAutofillInlineMenuElementIsVisibleStatus: ({
     message,
@@ -287,9 +287,9 @@ export type InlineMenuButtonPortMessageHandlers = {
   [key: string]: CallableFunction;
   triggerDelayedAutofillInlineMenuClosure: () => void;
   autofillInlineMenuButtonClicked: ({ port }: PortConnectionParam) => void;
-  autofillInlineMenuBlurred: () => void;
+  autofillInlineMenuBlurred: ({ port }: PortConnectionParam) => void;
   redirectAutofillInlineMenuFocusOut: ({ message, port }: PortOnMessageHandlerParams) => void;
-  updateAutofillInlineMenuColorScheme: () => void;
+  updateAutofillInlineMenuColorScheme: ({ port }: PortConnectionParam) => void;
 };
 
 export type InlineMenuListPortMessageHandlers = {
@@ -302,7 +302,7 @@ export type InlineMenuListPortMessageHandlers = {
   viewSelectedCipher: ({ message, port }: PortOnMessageHandlerParams) => void;
   redirectAutofillInlineMenuFocusOut: ({ message, port }: PortOnMessageHandlerParams) => void;
   updateAutofillInlineMenuListHeight: ({ message, port }: PortOnMessageHandlerParams) => void;
-  refreshGeneratedPassword: () => Promise<void>;
+  refreshGeneratedPassword: ({ port }: PortConnectionParam) => Promise<void>;
   fillGeneratedPassword: ({ port }: PortConnectionParam) => Promise<void>;
   refreshOverlayCiphers: () => Promise<void>;
 };
