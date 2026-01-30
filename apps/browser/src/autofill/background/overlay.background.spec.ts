@@ -1478,19 +1478,31 @@ describe("OverlayBackground", () => {
       });
 
       it("disconnects the button element port", () => {
-        sendMockExtensionMessage({
-          command: "autofillOverlayElementClosed",
-          overlayElement: AutofillOverlayElement.Button,
-        });
+        const sender = mock<chrome.runtime.MessageSender>({ tab: { id: 1 } });
+        overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
+
+        sendMockExtensionMessage(
+          {
+            command: "autofillOverlayElementClosed",
+            overlayElement: AutofillOverlayElement.Button,
+          },
+          sender,
+        );
 
         expect(buttonPortSpy.disconnect).toHaveBeenCalled();
       });
 
       it("disconnects the list element port", () => {
-        sendMockExtensionMessage({
-          command: "autofillOverlayElementClosed",
-          overlayElement: AutofillOverlayElement.List,
-        });
+        const sender = mock<chrome.runtime.MessageSender>({ tab: { id: 1 } });
+        overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
+
+        sendMockExtensionMessage(
+          {
+            command: "autofillOverlayElementClosed",
+            overlayElement: AutofillOverlayElement.List,
+          },
+          sender,
+        );
 
         expect(listPortSpy.disconnect).toHaveBeenCalled();
       });
@@ -1990,8 +2002,8 @@ describe("OverlayBackground", () => {
       it("triggers an update of the identity ciphers present on a login field", async () => {
         await initOverlayElementPorts();
         activeAccountStatusMock$.next(AuthenticationStatus.Unlocked);
-        const tab = createChromeTabMock({ id: 2 });
-        overlayBackground["focusedFieldData"] = createFocusedFieldDataMock();
+        const tab = createChromeTabMock({ id: 1 });
+        overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
         overlayBackground["isInlineMenuButtonVisible"] = true;
         const sender = mock<chrome.runtime.MessageSender>({ tab, frameId: 100 });
         const focusedFieldData = createFocusedFieldDataMock({
@@ -2038,14 +2050,14 @@ describe("OverlayBackground", () => {
       });
 
       describe("displaying the password generation menu", () => {
-        const tab = createChromeTabMock({ id: 2 });
+        const tab = createChromeTabMock({ id: 1 });
         const sender = mock<chrome.runtime.MessageSender>({ tab, frameId: 100 });
         let focusedFieldData: FocusedFieldData;
 
         beforeEach(async () => {
           await initOverlayElementPorts();
           activeAccountStatusMock$.next(AuthenticationStatus.Unlocked);
-          overlayBackground["focusedFieldData"] = createFocusedFieldDataMock();
+          overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
           overlayBackground["isInlineMenuButtonVisible"] = true;
           focusedFieldData = createFocusedFieldDataMock({
             tabId: tab.id,
@@ -2082,7 +2094,7 @@ describe("OverlayBackground", () => {
       });
 
       describe("displaying the save login menu", () => {
-        const tab = createChromeTabMock({ id: 2 });
+        const tab = createChromeTabMock({ id: 1 });
         const sender = mock<chrome.runtime.MessageSender>({ tab, frameId: 100 });
         let focusedFieldData: FocusedFieldData;
         let formData: ModifyLoginCipherFormData;
@@ -2090,7 +2102,7 @@ describe("OverlayBackground", () => {
         beforeEach(async () => {
           await initOverlayElementPorts();
           activeAccountStatusMock$.next(AuthenticationStatus.Unlocked);
-          overlayBackground["focusedFieldData"] = createFocusedFieldDataMock();
+          overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
           overlayBackground["isInlineMenuButtonVisible"] = true;
           focusedFieldData = createFocusedFieldDataMock({
             tabId: tab.id,
@@ -2576,7 +2588,10 @@ describe("OverlayBackground", () => {
       });
 
       it("will check if the inline menu list is focused if the list port is open", () => {
-        sendMockExtensionMessage({ command: "checkAutofillInlineMenuFocused" });
+        const sender = mock<chrome.runtime.MessageSender>({ tab: { id: 1 } });
+        overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
+
+        sendMockExtensionMessage({ command: "checkAutofillInlineMenuFocused" }, sender);
 
         expect(listPortSpy.postMessage).toHaveBeenCalledWith({
           command: "checkAutofillInlineMenuListFocused",
@@ -2588,9 +2603,8 @@ describe("OverlayBackground", () => {
 
       it("will check if the overlay button is focused if the list port is not open", () => {
         const sender = mock<chrome.runtime.MessageSender>({ tab: { id: 1 } });
-        if (sender.tab.id) {
-          overlayBackground["inlineMenuListPorts"][sender.tab.id] = undefined;
-        }
+        overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
+        overlayBackground["inlineMenuListPorts"][sender.tab.id] = undefined;
 
         sendMockExtensionMessage({ command: "checkAutofillInlineMenuFocused" }, sender);
 
@@ -2606,8 +2620,9 @@ describe("OverlayBackground", () => {
     describe("focusAutofillInlineMenuList message handler", () => {
       it("will send a `focusInlineMenuList` message to the overlay list port", async () => {
         await initOverlayElementPorts({ initList: true, initButton: false });
+        const sender = mock<chrome.runtime.MessageSender>({ tab: { id: 1 } });
 
-        sendMockExtensionMessage({ command: "focusAutofillInlineMenuList" });
+        sendMockExtensionMessage({ command: "focusAutofillInlineMenuList" }, sender);
 
         expect(listPortSpy.postMessage).toHaveBeenCalledWith({
           command: "focusAutofillInlineMenuList",
@@ -2762,7 +2777,10 @@ describe("OverlayBackground", () => {
       });
 
       it("updates the inline menu button auth status", async () => {
-        sendMockExtensionMessage({ command: "unlockCompleted" });
+        sendMockExtensionMessage({
+          command: "unlockCompleted",
+          data: { commandToRetry: { sender: { tab: { id: 1 } } } },
+        });
         await flushPromises();
 
         expect(buttonPortSpy.postMessage).toHaveBeenCalledWith({
@@ -3065,6 +3083,7 @@ describe("OverlayBackground", () => {
 
       it("sends a message to the button and list ports that triggers a delayed closure of the inline menu", async () => {
         jest.useFakeTimers();
+        overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
         sendPortMessage(buttonMessageConnectorSpy, {
           command: "triggerDelayedAutofillInlineMenuClosure",
           portKey,
@@ -3079,6 +3098,7 @@ describe("OverlayBackground", () => {
 
       it("triggers a single delayed closure if called again within a 100ms threshold", async () => {
         jest.useFakeTimers();
+        overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
         sendPortMessage(buttonMessageConnectorSpy, {
           command: "triggerDelayedAutofillInlineMenuClosure",
           portKey,
@@ -3398,6 +3418,7 @@ describe("OverlayBackground", () => {
             jest.useFakeTimers();
 
             await initOverlayElementPorts();
+            overlayBackground["focusedFieldData"] = createFocusedFieldDataMock({ tabId: 1 });
             sendPortMessage(listMessageConnectorSpy, {
               command: "fillAutofillInlineMenuCipher",
               inlineMenuCipherId: "inline-menu-cipher-1",
@@ -3832,15 +3853,17 @@ describe("OverlayBackground", () => {
   });
 
   describe("handle port onDisconnect", () => {
-    it("sets the disconnected port to a `null` value", async () => {
+    it("removes the disconnected port from the ports record", async () => {
       await initOverlayElementPorts();
 
       triggerPortOnDisconnectEvent(buttonPortSpy);
       triggerPortOnDisconnectEvent(listPortSpy);
       await flushPromises();
 
-      expect(overlayBackground["inlineMenuListPorts"][buttonPortSpy.sender.tab.id]).toBeNull();
-      expect(overlayBackground["inlineMenuButtonPorts"][buttonPortSpy.sender.tab.id]).toBeNull();
+      expect(overlayBackground["inlineMenuListPorts"][buttonPortSpy.sender.tab.id]).toBeUndefined();
+      expect(
+        overlayBackground["inlineMenuButtonPorts"][buttonPortSpy.sender.tab.id],
+      ).toBeUndefined();
     });
   });
 });
